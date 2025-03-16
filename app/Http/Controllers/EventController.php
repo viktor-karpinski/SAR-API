@@ -1,0 +1,319 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Event;
+use App\Models\EventUser;
+use App\Models\FcmToken;
+use App\Models\User;
+use Carbon\Carbon;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Http;
+use Kreait\Firebase\Messaging\CloudMessage;
+use Kreait\Firebase\Messaging\Notification;
+use Kreait\Firebase\Messaging;
+
+
+class EventController extends Controller
+{
+
+    private $messaging;
+
+    public function __construct(Messaging $messaging)
+    {
+        $this->messaging = $messaging;
+    }
+
+    private function getEvent($event)
+    {
+        return [
+            'id' => $event->id,
+            'address' => $event->address,
+            'lat' => $event->lat,
+            'lon' => $event->lon,
+            'description' => $event->description,
+            'from' => $event->from,
+            'till' => $event->till,
+            'status' => $event->status,
+            'user_id' => $event->user_id,
+            'created_at' => Carbon::parse($event->created_at)->format('d.m.Y'),
+            'updated_at' => $event->updated_at,
+            'users' => $event->eventUsers->map(function ($eventUser) {
+                return [
+                    'id' => $eventUser->id,
+                    'status' => $eventUser->status,
+                    'user' => $eventUser->user
+                ];
+            }),
+        ];
+    }
+
+    public function index()
+    {
+        $events = Event::orderBy('id', 'DESC')->get()->map(function ($event) {
+            return $this->getEvent($event);
+        });
+
+        return response()->json($events, 200);
+    }
+
+
+    public function store(Request $request)
+    {
+        if (!Auth::user()->isOrganiser) {
+            return response()->json([
+                'message' => 'STORING EVENT FAILED => NOT AN ORGANISER'
+            ], 403);
+        }
+
+        $request->validate([
+            'address' => 'required|string|max:255',
+            'lat' => 'nullable|numeric',
+            'lon' => 'nullable|numeric',
+            'description' => 'nullable|string',
+            //'from' => 'required|date_format:H:i',
+            //'till' => 'nullable|date_format:H:i',
+            //'status' => 'nullable|string|in:pending,active,completed',
+        ]);
+
+        $event = Event::create([
+            'address' => $request->address,
+            'lat' => -1, //$request->lat,
+            'lon' => -1, //$request->lon,
+            'description' => $request->description,
+            'from' => Carbon::now(),
+            'till' => null,
+            'user_id' => Auth::user()->id,
+        ]);
+
+        $event->refresh();
+        Log::info("CURRENT USER: " . Auth::user()->id . " CURRENT EVENT: " . $event->id);
+        $users = User::where('id', '!=', Auth::user()->id)->get();
+
+        foreach ($users as $user) {
+            EventUser::create([
+                'user_id' => $user->id,
+                'event_id' => $event->id,
+                'status' => 0,
+            ]);
+        }
+
+        Log::info("Just Before PUSH NOTIFICATIONS");
+
+        $event->load(['eventUsers.user']);
+
+        $this->sendPushNotification($event);
+
+        return response()->json($this->getEvent($event), 201);
+    }
+
+    public function update(Request $request, Event $event)
+    {
+        if (!Auth::user()->isOrganiser) {
+            return response()->json([
+                'message' => 'STORING EVENT FAILED => NOT AN ORGANISER'
+            ], 403);
+        }
+
+        $validatedData = $request->validate([
+            'address' => 'sometimes|string|max:255',
+            'lat' => 'nullable|numeric',
+            'lon' => 'nullable|numeric',
+            'description' => 'nullable|string',
+        ]);
+
+        $event->update($validatedData);
+
+        return response()->json($event, 200);
+    }
+
+    public function activate(Event $event)
+    {
+        if (!Auth::user()->isOrganiser) {
+            return response()->json([
+                'message' => 'ACTIVATING EVENT FAILED => NOT AN ORGANISER'
+            ], 403);
+        }
+
+        $event->status = 'active';
+        $event->save();
+
+        $this->sendPushNotification($event);
+
+        return response()->json([
+            'event' => $this->getEvent($event),
+        ], 200);
+    }
+
+    public function destroy(Event $event)
+    {
+        if (!Auth::user()->isOrganiser) {
+            return response()->json([
+                'message' => 'DELETING EVENT FAILED => NOT AN ORGANISER'
+            ], 403);
+        }
+
+        $event->eventUsers()->delete();
+        $event->delete();
+
+        $events = Event::orderBy('id', 'DESC')->get()->map(function ($event) {
+            return $this->getEvent($event);
+        });
+
+        return response()->json(['events' => $events], 200);
+    }
+
+    public function finishEvent(Event $event)
+    {
+        if (!Auth::user()->isOrganiser) {
+            return response()->json([
+                'message' => 'FINISHING EVENT FAILED => NOT AN ORGANISER'
+            ], 403);
+        }
+
+        if ($event->till) {
+            return response()->json($event, 200);
+        }
+
+        $event->till = Carbon::now();
+        $event->save();
+        foreach ($event->eventUsers as $user) {
+            if ($user->status == 0) {
+                $user->status = 2;
+                $user->save();
+            }
+        }
+
+        $events = Event::orderBy('id', 'DESC')->get()->map(function ($event) {
+            return $this->getEvent($event);
+        });
+
+        return response()->json([
+            'event' => $this->getEvent($event),
+            'events' => $events,
+        ], 200);
+    }
+
+    private function userParticipation(Event $event, $status)
+    {
+        if ($event->till != null) {
+            return response()->json([], 400);
+        }
+
+        $user = EventUser::where([
+            ['event_id', $event->id],
+            ['user_id', Auth::user()->id],
+        ])->first();
+
+        $user->status = $status;
+        $user->save();
+
+        return response()->json($this->getEvent($event), 200);
+    }
+
+    public function declineParticipation(Event $event)
+    {
+        return $this->userParticipation($event, 2);
+    }
+
+    public function acceptParticipation(Event $event)
+    {
+        return $this->userParticipation($event, 1);
+    }
+
+    /* private function sendPushNotification($event)
+    {
+        $tokens = FcmToken::pluck('token')->toArray();
+
+        if (empty($tokens)) return;
+
+        $serverKey = env('FIREBASE_SERVER_KEY');  // Set this in .env file
+        $data = [
+            "registration_ids" => $tokens,
+            "notification" => [
+                "title" => "New Event Created!",
+                "body" => "Location: {$event->address}",
+                "sound" => "default"
+            ],
+            "data" => [
+                "event_id" => (string) $event->id,
+            ]
+        ];
+
+        Http::withHeaders([
+            "Authorization" => "key=$serverKey",
+            "Content-Type" => "application/json"
+        ])->post("https://fcm.googleapis.com/fcm/send", $data);
+    }
+    $user_tokens = FcmToken::where('user_id', '!=', Auth::user()->id)->get();
+        Log::info("I am here before");
+
+        $messages = [];
+
+        foreach ($user_tokens as $user) {
+            $messages[] = [
+                "to" => $user->token,
+                "title" => $event->satus == 'active' ? 'Zásah sa začal!' : 'Zásah čoskoro! Buď pripravení!',
+                "body" => "Poloha: {$event->address}",
+                "sound" => "siren_alarm.caf",
+                "data" => [
+                    "event_id" => (string) $event->id,
+                ]
+            ];
+        }
+
+        Log::info("I am here");
+
+        $response = Http::withHeaders([
+            "Content-Type" => "application/json"
+        ])->post("https://exp.host/--/api/v2/push/send", $messages);
+
+        Log::info("Expo Push Notification Response: " . $response->body());
+    
+    
+    */
+
+    private function sendPushNotification($event)
+    {
+        $messaging = app('firebase.messaging');
+        //Log::info("MESSAGING: " . $messaging);
+        $user_tokens = FcmToken::where('user_id', Auth::user()->id)->get();
+
+        foreach ($user_tokens as $user) {
+            Log::info("TOKEN: " . $user->token);
+
+            $message = CloudMessage::fromArray([
+                'token' => $user->token,
+                'notification' => [
+                    'title' => $event->status == 'active' ? 'Zásah sa začal!' : 'Zásah čoskoro! Buď pripravení!',
+                    'body' => "Poloha: {$event->address}",
+                    'sound' => 'siren_alarm.caf'
+                ],
+                'android' => [
+                    'notification' => [
+                        'sound' => 'siren_alarm.caf',
+                    ],
+                ],
+                'apns' => [
+                    'payload' => [
+                        'aps' => [
+                            'sound' => 'siren_alarm.caf', // Make sure the sound file is in your iOS project
+                        ],
+                    ],
+                ],
+            ]);
+
+            /*$message = CloudMessage::withTarget('token', $user->token)
+                ->withNotification(Notification::create(
+                    $event->status == 'active' ? 'Zásah sa začal!' : 'Zásah čoskoro! Buď pripravení!',
+                    "Poloha: {$event->address}"
+                ))
+                ->withData(['event_id' => (string) $event->id]);
+
+            $messaging->send($message);*/
+            $this->messaging->send($message);
+        }
+    }
+}
