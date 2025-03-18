@@ -10,9 +10,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Http;
 use Kreait\Firebase\Messaging\CloudMessage;
-use Kreait\Firebase\Messaging\Notification;
 use Kreait\Firebase\Messaging;
 
 
@@ -89,7 +87,6 @@ class EventController extends Controller
         ]);
 
         $event->refresh();
-        Log::info("CURRENT USER: " . Auth::user()->id . " CURRENT EVENT: " . $event->id);
         $users = User::where('id', '!=', Auth::user()->id)->get();
 
         foreach ($users as $user) {
@@ -100,10 +97,10 @@ class EventController extends Controller
             ]);
         }
 
-        Log::info("Just Before PUSH NOTIFICATIONS");
-
         $event->load(['eventUsers.user']);
 
+        $this->sendPushNotification($event);
+        $this->sendPushNotification($event);
         $this->sendPushNotification($event);
 
         return response()->json($this->getEvent($event), 201);
@@ -223,96 +220,32 @@ class EventController extends Controller
         return $this->userParticipation($event, 1);
     }
 
-    /* private function sendPushNotification($event)
-    {
-        $tokens = FcmToken::pluck('token')->toArray();
-
-        if (empty($tokens)) return;
-
-        $serverKey = env('FIREBASE_SERVER_KEY');  // Set this in .env file
-        $data = [
-            "registration_ids" => $tokens,
-            "notification" => [
-                "title" => "New Event Created!",
-                "body" => "Location: {$event->address}",
-                "sound" => "default"
-            ],
-            "data" => [
-                "event_id" => (string) $event->id,
-            ]
-        ];
-
-        Http::withHeaders([
-            "Authorization" => "key=$serverKey",
-            "Content-Type" => "application/json"
-        ])->post("https://fcm.googleapis.com/fcm/send", $data);
-    }
-    $user_tokens = FcmToken::where('user_id', '!=', Auth::user()->id)->get();
-        Log::info("I am here before");
-
-        $messages = [];
-
-        foreach ($user_tokens as $user) {
-            $messages[] = [
-                "to" => $user->token,
-                "title" => $event->satus == 'active' ? 'Zásah sa začal!' : 'Zásah čoskoro! Buď pripravení!',
-                "body" => "Poloha: {$event->address}",
-                "sound" => "siren_alarm.caf",
-                "data" => [
-                    "event_id" => (string) $event->id,
-                ]
-            ];
-        }
-
-        Log::info("I am here");
-
-        $response = Http::withHeaders([
-            "Content-Type" => "application/json"
-        ])->post("https://exp.host/--/api/v2/push/send", $messages);
-
-        Log::info("Expo Push Notification Response: " . $response->body());
-    
-    
-    */
-
     private function sendPushNotification($event)
     {
-        $messaging = app('firebase.messaging');
-        //Log::info("MESSAGING: " . $messaging);
-        $user_tokens = FcmToken::where('user_id', Auth::user()->id)->get();
+        $user_tokens = FcmToken::where('user_id', '!=', Auth::user()->id)->get();
 
         foreach ($user_tokens as $user) {
-            Log::info("TOKEN: " . $user->token);
-
             $message = CloudMessage::fromArray([
                 'token' => $user->token,
                 'notification' => [
                     'title' => $event->status == 'active' ? 'Zásah sa začal!' : 'Zásah čoskoro! Buď pripravení!',
                     'body' => "Poloha: {$event->address}",
-                    'sound' => 'siren_alarm.caf'
+                    'sound' => $event->status == 'active' ? 'default' : 'siren_alarm.caf'
                 ],
                 'android' => [
                     'notification' => [
-                        'sound' => 'siren_alarm.caf',
+                        'sound' => $event->status == 'active' ? 'default' : 'siren_alarm.caf',
                     ],
                 ],
                 'apns' => [
                     'payload' => [
                         'aps' => [
-                            'sound' => 'siren_alarm.caf', // Make sure the sound file is in your iOS project
+                            'sound' => $event->status == 'active' ? 'default' : 'siren_alarm.caf',
                         ],
                     ],
                 ],
             ]);
 
-            /*$message = CloudMessage::withTarget('token', $user->token)
-                ->withNotification(Notification::create(
-                    $event->status == 'active' ? 'Zásah sa začal!' : 'Zásah čoskoro! Buď pripravení!',
-                    "Poloha: {$event->address}"
-                ))
-                ->withData(['event_id' => (string) $event->id]);
-
-            $messaging->send($message);*/
             $this->messaging->send($message);
         }
     }

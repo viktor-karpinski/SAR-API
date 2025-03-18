@@ -1,3 +1,4 @@
 *.json
 *.env
+app/Http/Providers/FirebaseServiceProvider.php
 
