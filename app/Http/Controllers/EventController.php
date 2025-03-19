@@ -249,4 +249,9 @@ class EventController extends Controller
             $this->messaging->send($message);
         }
     }
+
+    public function show(Event $event)
+    {
+        return response()->json($this->getEvent($event));
+    }
 }
