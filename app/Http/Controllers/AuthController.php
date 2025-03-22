@@ -84,6 +84,10 @@ class AuthController extends Controller
                     'message' => $e->getMessage(),
                 ], 400);
             }
+        } else {
+            return response()->json([
+                'errors' => ['phone' => 'Neplatné telefónne číslo'],
+            ], 422);
         }
 
         return response()->json([
@@ -132,13 +136,13 @@ class AuthController extends Controller
         $phoneUtil = PhoneNumberUtil::getInstance();
         if (strlen($phone) > 3) {
             $country = "SK";
-            if (substr($phone, 0, 3) !== '+43') {
+            if (substr($phone, 0, 3) === '+43') {
                 $country = 'AT';
-            } elseif (substr($phone, 0, 3) !== '+48') {
+            } elseif (substr($phone, 0, 3) === '+48') {
                 $country = 'PL';
-            } elseif (substr($phone, 0, 4) !== '+421') {
+            } elseif (substr($phone, 0, 4) === '+421') {
                 $country = 'SK';
-            } elseif (substr($phone, 0, 4) !== '+420') {
+            } elseif (substr($phone, 0, 4) === '+420') {
                 $country = 'CZ';
             }
 
