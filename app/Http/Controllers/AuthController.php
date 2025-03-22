@@ -6,6 +6,8 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Kreait\Firebase\Auth as FirebaseAuth;
 use Illuminate\Support\Facades\Auth;
+use libphonenumber\PhoneNumberUtil;
+use libphonenumber\PhoneNumberFormat;
 
 use Illuminate\Support\Facades\Log;
 
@@ -45,39 +47,43 @@ class AuthController extends Controller
             'phone.unique' => 'Zadané telefónne číslo už existuje',
         ]);
 
-        try {
-            $userProperties = [
-                'email' => $request->input('email'),
-                'password' => $request->input('password'),
-                'displayName' => $request->input('name'),
-            ];
+        $phone = $this->checkPhone($request->phone);
 
-            $firebaseUser = $this->firebaseAuth->createUser($userProperties);
+        if ($phone['valid']) {
+            try {
+                $userProperties = [
+                    'email' => $request->input('email'),
+                    'password' => $request->input('password'),
+                    'displayName' => $request->input('name'),
+                ];
 
-            $user = User::create([
-                'firebase_uid' => $firebaseUser->uid,
-                'name' => $request->input('name'),
-                'email' => $request->input('email'),
-                'phone' => $request->input('phone'),
-            ]);
+                $firebaseUser = $this->firebaseAuth->createUser($userProperties);
 
-            $signInResult = $this->firebaseAuth->signInWithEmailAndPassword(
-                $request->input('email'),
-                $request->input('password')
-            );
+                $user = User::create([
+                    'firebase_uid' => $firebaseUser->uid,
+                    'name' => $request->input('name'),
+                    'email' => $request->input('email'),
+                    'phone' => $phone['formatted'],
+                ]);
 
-            $idToken = $signInResult->idToken();
+                $signInResult = $this->firebaseAuth->signInWithEmailAndPassword(
+                    $request->input('email'),
+                    $request->input('password')
+                );
 
-            return response()->json([
-                'user' => $user,
-                'message' => 'User registered successfully',
-                'firebase_token' => $idToken,
-            ], 201);
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Failed to register user',
-                'message' => $e->getMessage(),
-            ], 400);
+                $idToken = $signInResult->idToken();
+
+                return response()->json([
+                    'user' => $user,
+                    'message' => 'User registered successfully',
+                    'firebase_token' => $idToken,
+                ], 201);
+            } catch (\Exception $e) {
+                return response()->json([
+                    'error' => 'Failed to register user',
+                    'message' => $e->getMessage(),
+                ], 400);
+            }
         }
 
         return response()->json([
@@ -119,5 +125,36 @@ class AuthController extends Controller
                 'message' => $e->getMessage(),
             ], 401);
         }
+    }
+
+    private function checkPhone($phone)
+    {
+        $phoneUtil = PhoneNumberUtil::getInstance();
+        if (strlen($phone) > 3) {
+            $country = "SK";
+            if (substr($phone, 0, 3) !== '+43') {
+                $country = 'AT';
+            } elseif (substr($phone, 0, 3) !== '+48') {
+                $country = 'PL';
+            } elseif (substr($phone, 0, 4) !== '+421') {
+                $country = 'SK';
+            } elseif (substr($phone, 0, 4) !== '+420') {
+                $country = 'CZ';
+            }
+
+            try {
+                $numberProto = $phoneUtil->parse($phone, $country);
+                $isValid = $phoneUtil->isValidNumber($numberProto);
+                if ($isValid) {
+                    $formatted = $phoneUtil->format($numberProto, PhoneNumberFormat::INTERNATIONAL);
+                    return ['valid' => true, 'formatted' => $formatted];
+                } else {
+                    return ['valid' => false];
+                }
+            } catch (\libphonenumber\NumberParseException $e) {
+                return ['valid' => false];
+            }
+        }
+        return ['valid' => false];
     }
 }
