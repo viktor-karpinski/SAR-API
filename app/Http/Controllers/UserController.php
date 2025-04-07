@@ -63,7 +63,7 @@ class UserController extends Controller
         ], 200);
     }
 
-    public function delete()
+    public function destroy()
     {
         $user = Auth::user();
         $user->disabled = true;
