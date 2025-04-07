@@ -23,6 +23,7 @@ class User extends Authenticatable
         'firebase_uid',
         'isOrganiser',
         'phone',
+        'disabled',
     ];
 
     /**

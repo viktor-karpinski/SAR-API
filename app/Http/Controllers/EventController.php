@@ -87,7 +87,10 @@ class EventController extends Controller
         ]);
 
         $event->refresh();
-        $users = User::where('id', '!=', Auth::user()->id)->get();
+        $users = User::where([
+            ['id', '!=', Auth::user()->id],
+            ['disabled', false]
+        ])->get();
 
         foreach ($users as $user) {
             EventUser::create([

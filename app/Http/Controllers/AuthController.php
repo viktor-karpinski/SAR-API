@@ -64,6 +64,7 @@ class AuthController extends Controller
                     'name' => $request->input('name'),
                     'email' => $request->input('email'),
                     'phone' => $phone['formatted'],
+                    'disabled' => true,
                 ]);
 
                 $signInResult = $this->firebaseAuth->signInWithEmailAndPassword(
@@ -113,22 +114,29 @@ class AuthController extends Controller
                 ]
             );
 
-            Auth::login($user);
-            $user->refresh();
+            if (!$user->disabled) {
+                Auth::login($user);
+                $user->refresh();
 
-            $token = $user->createToken('firebase-token')->plainTextToken;
+                $token = $user->createToken('firebase-token')->plainTextToken;
 
-            return response()->json([
-                'user' => $user,
-                'token' => $token,
-                'message' => 'Authenticated successfully',
-            ], 200);
+                return response()->json([
+                    'user' => $user,
+                    'token' => $token,
+                    'message' => 'Authenticated successfully',
+                ], 200);
+            }
         } catch (\Exception $e) {
             return response()->json([
                 'error' => 'Invalid Firebase token',
                 'message' => $e->getMessage(),
             ], 401);
         }
+
+        return response()->json([
+            'error' => 'Invalid Login',
+            'message' => 'Invalid Login',
+        ], 401);
     }
 
     private function checkPhone($phone)
