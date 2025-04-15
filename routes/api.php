@@ -34,9 +34,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::post('/event/{event}/decline', [EventController::class, 'declineParticipation']);
 
     Route::get('/users', [UserController::class, 'users']);
-    Route::put('/user', [UserController::class, 'update']);
-    Route::delete('/user', [UserController::class, 'destroy']);
-    Route::put('/user/password', [UserController::class, 'changePassword']);
+    Route::put('/user', [AuthController::class, 'update']);
+    Route::delete('/user', [AuthController::class, 'destroy']);
+    Route::put('/user/password', [AuthController::class, 'changePassword']);
 });
 
 Route::post('/register', [AuthController::class, 'register']);
