@@ -245,7 +245,7 @@ class AuthController extends Controller
                 'errors' => [
                     'email' => 'ERROR'
                 ],
-            ], 200);
+            ], 500);
         }
 
         return response()->json([
@@ -263,19 +263,30 @@ class AuthController extends Controller
 
         $user = Auth::user();
 
-        if (!Hash::check($request->input('current_password'), $user->password)) {
+        try {
+            $this->firebaseAuth->signInWithEmailAndPassword(
+                $user->email,
+                $request->input('current_password')
+            );
+        } catch (\Throwable $e) {
             return response()->json([
-                'error' => 'Current password is incorrect',
+                'errors' => ['current_password' => 'Aktuálne heslo je nesprávne'],
             ], 403);
         }
 
-        $user->password = Hash::make($request->input('new_password'));
-        $user->save();
+        try {
+            $this->firebaseAuth->changeUserPassword($user->firebase_uid, $request->input('new_password'));
 
-        return response()->json([
-            'message' => 'Password changed successfully',
-        ], 200);
+            return response()->json([
+                'message' => 'Password changed successfully',
+            ], 200);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'errors' => ['current_password' => 'Niečo sa pokazilo, skúste to znova neskôr'],
+            ], 500);
+        }
     }
+
 
     public function destroy()
     {
