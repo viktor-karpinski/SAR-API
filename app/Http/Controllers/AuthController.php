@@ -291,11 +291,21 @@ class AuthController extends Controller
     public function destroy()
     {
         $user = Auth::user();
+
+        try {
+            $this->firebaseAuth->deleteUser($user->firebase_uid);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'error' => 'Failed to delete user from Firebase',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+
         $user->disabled = true;
         $user->save();
 
         return response()->json([
-            'message' => 'User has been disabled',
+            'message' => 'User has been deleted from Firebase and disabled locally',
         ], 200);
     }
 }
