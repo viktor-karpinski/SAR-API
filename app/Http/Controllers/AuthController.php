@@ -302,6 +302,7 @@ class AuthController extends Controller
         }
 
         $user->disabled = true;
+        $user->firebase_uid = "";
         $user->save();
 
         return response()->json([
