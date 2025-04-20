@@ -24,6 +24,16 @@ class AuthController extends Controller
 
     public function register(Request $request)
     {
+        $phone = $this->checkPhone($request->phone);
+
+        if (!$phone['valid']) {
+            return response()->json([
+                'errors' => ['phone' => 'Neplatné telefónne číslo'],
+            ], 422);
+        }
+
+        $request->merge(['phone' => $phone['formatted']]);
+
         $request->validate([
             'email' => 'required|email|unique:users,email',
             'password' => 'required|string|min:6',
@@ -48,49 +58,42 @@ class AuthController extends Controller
             'phone.unique' => 'Zadané telefónne číslo už existuje',
         ]);
 
-        $phone = $this->checkPhone($request->phone);
+        try {
+            $userProperties = [
+                'email' => $request->input('email'),
+                'password' => $request->input('password'),
+                'displayName' => $request->input('name'),
+            ];
 
-        if ($phone['valid']) {
-            try {
-                $userProperties = [
-                    'email' => $request->input('email'),
-                    'password' => $request->input('password'),
-                    'displayName' => $request->input('name'),
-                ];
+            $firebaseUser = $this->firebaseAuth->createUser($userProperties);
 
-                $firebaseUser = $this->firebaseAuth->createUser($userProperties);
+            $user = User::create([
+                'firebase_uid' => $firebaseUser->uid,
+                'name' => $request->input('name'),
+                'email' => $request->input('email'),
+                'phone' => $phone['formatted'],
+                'disabled' => true,
+            ]);
 
-                $user = User::create([
-                    'firebase_uid' => $firebaseUser->uid,
-                    'name' => $request->input('name'),
-                    'email' => $request->input('email'),
-                    'phone' => $phone['formatted'],
-                    'disabled' => true,
-                ]);
+            $signInResult = $this->firebaseAuth->signInWithEmailAndPassword(
+                $request->input('email'),
+                $request->input('password')
+            );
 
-                $signInResult = $this->firebaseAuth->signInWithEmailAndPassword(
-                    $request->input('email'),
-                    $request->input('password')
-                );
+            $idToken = $signInResult->idToken();
 
-                $idToken = $signInResult->idToken();
-
-                return response()->json([
-                    'user' => $user,
-                    'message' => 'User registered successfully',
-                    'firebase_token' => $idToken,
-                ], 201);
-            } catch (\Exception $e) {
-                return response()->json([
-                    'error' => 'Failed to register user',
-                    'message' => $e->getMessage(),
-                ], 400);
-            }
-        } else {
             return response()->json([
-                'errors' => ['phone' => 'Neplatné telefónne číslo'],
-            ], 422);
+                'user' => $user,
+                'message' => 'User registered successfully',
+                'firebase_token' => $idToken,
+            ], 201);
+        } catch (\Exception $e) {
+            return response()->json([
+                'error' => 'Failed to register user',
+                'message' => $e->getMessage(),
+            ], 400);
         }
+
 
         return response()->json([
             'error' => 'Something went wrong',
@@ -175,22 +178,56 @@ class AuthController extends Controller
     {
         $user = Auth::user();
 
-        $request->validate([
-            'name' => 'sometimes|string|max:255',
-            'email' => 'sometimes|email|unique:users,email,' . $user->id,
-            'phone' => 'sometimes|string|max:255|unique:users,phone,' . $user->id,
-        ]);
+        if ($request->phone !== $user->phone) {
+            $phone = $this->checkPhone($request->phone);
+
+            if (!$phone['valid']) {
+                return response()->json([
+                    'errors' => ['phone' => 'Neplatné telefónne číslo'],
+                ], 422);
+            }
+
+            $request->merge(['phone' => $phone['formatted']]);
+
+            $request->validate([
+                'phone' => 'required|string|max:255|unique:users,phone',
+            ], [
+                'phone.required' => 'Pole telefónne číslo je povinné',
+                'phone.string' => 'Telefónne číslo musí byť textový reťazec',
+                'phone.max' => 'Telefónne číslo môže mať maximálne 255 znakov',
+                'phone.unique' => 'Zadané telefónne číslo už existuje',
+            ]);
+
+            $user->phone = $request->phone;
+            $user->save();
+        }
 
         $savedInFirebase = true;
 
         try {
             $updateData = [];
 
-            if ($request->has('email')) {
+            if ($request->has('email') && $request->email !== $user->email) {
+                $request->validate([
+                    'email' => 'required|email|unique:users,email',
+                ], [
+                    'email.required' => 'Pole e-mail je povinné',
+                    'email.email' => 'Zadajte platnú e-mailovú adresu',
+                    'email.unique' => 'Zadaný e-mail už existuje',
+                ]);
+                $user->email = $request->email;
                 $updateData['email'] = $request->input('email');
             }
 
-            if ($request->has('name')) {
+            if ($request->has('name') && $request->name !== $user->name) {
+                $request->validate([
+                    'name' => 'required|string|max:255',
+                ], [
+                    'name.required' => 'Pole meno je povinné',
+                    'name.string' => 'Meno musí byť textový reťazec',
+                    'name.max' => 'Meno môže mať maximálne 255 znakov',
+                ]);
+                $user->name = $request->name;
                 $updateData['displayName'] = $request->input('name');
             }
 
@@ -202,10 +239,6 @@ class AuthController extends Controller
         }
 
         if ($savedInFirebase) {
-            if ($request->has('name')) $user->name = $request->input('name');
-            if ($request->has('email')) $user->email = $request->input('email');
-            if ($request->has('phone')) $user->phone = $request->input('phone');
-
             $user->save();
         } else {
             return response()->json([
