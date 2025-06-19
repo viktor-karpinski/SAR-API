@@ -237,7 +237,8 @@ class EventController extends Controller
                 ],
                 'android' => [
                     'notification' => [
-                        'sound' => $event->status == 'active' ? 'default' : 'siren_alarm.caf',
+                        'sound' => $event->status == 'active' ? 'default' : 'siren_alarm',
+                        'channel_id' => 'default',
                     ],
                 ],
                 'apns' => [
