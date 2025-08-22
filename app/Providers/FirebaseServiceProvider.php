@@ -13,6 +13,11 @@ class FirebaseServiceProvider extends ServiceProvider
 {
     public function register()
     {
+
+        if (app()->runningInConsole()) {
+            return;
+        }
+
         $credentialsPath = config('firebase.credentials');
         $credentialsPath = '/Users/viktorkarpinski/Desktop/Freelance/AppDevelopment/SAR/api/firebase_cred.json';
 
